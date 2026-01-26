@@ -1,0 +1,346 @@
+:root {
+    --bg-color: #0f172a;
+    --card-bg: #1e293b;
+    --text-primary: #f1f5f9;
+    --text-secondary: #94a3b8;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
+    --border: #334155;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Inter', sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-primary);
+    line-height: 1.6;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    overflow: hidden;
+    /* Prevent body scroll, handle in panes */
+}
+
+.app-container {
+    width: 100%;
+    max-width: 1400px;
+    /* Wider for split view */
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    height: 100%;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 0;
+    flex-shrink: 0;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.logo h1 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: white;
+}
+
+/* Removed p tag styling as we removed the p tag */
+
+main {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    /* Important for nested scrolling */
+}
+
+/* Upload Zone */
+.upload-zone {
+    /* Default: Big Hero State */
+    flex-grow: 1;
+    background-color: var(--card-bg);
+    border: 2px dashed var(--border);
+    border-radius: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+    padding: 2rem;
+}
+
+/* Compact Upload Zone (When results are shown) */
+main.has-results .upload-zone {
+    flex-grow: 0;
+    min-height: auto;
+    height: 100px;
+    /* Fixed small height */
+    flex-direction: row;
+    /* Horizontal layout */
+    padding: 0 2rem;
+    gap: 1rem;
+    border-style: dashed;
+}
+
+/* Adjust content layout for compact mode */
+main.has-results .upload-content {
+    flex-direction: row;
+    gap: 1rem;
+}
+
+main.has-results .upload-icon {
+    width: 32px;
+    height: 32px;
+}
+
+main.has-results .upload-content h3 {
+    font-size: 1rem;
+    margin: 0;
+}
+
+main.has-results .upload-content p {
+    display: none;
+    /* Hide helper text in compact mode */
+}
+
+.upload-zone:hover,
+.upload-zone.dragover {
+    border-color: var(--accent);
+    background-color: rgba(59, 130, 246, 0.05);
+}
+
+.upload-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+    pointer-events: none;
+    /* Let parent handle clicks */
+}
+
+/* Re-enable pointer events for button so it can be clicked specifically if needed, 
+   but parent click handler usually covers it. */
+.upload-content button {
+    pointer-events: auto;
+}
+
+.upload-icon {
+    color: var(--text-secondary);
+}
+
+.loading-overlay {
+    position: fixed;
+    /* Fixed cover entire screen or container */
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(15, 23, 42, 0.8);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1.5rem;
+    backdrop-filter: blur(8px);
+    z-index: 100;
+    /* High z-index to cover everything */
+}
+
+.spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid rgba(59, 130, 246, 0.3);
+    border-radius: 50%;
+    border-top-color: var(--accent);
+    animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Force hide when the hidden attribute is present, overriding display: flex */
+.loading-overlay[hidden] {
+    display: none !important;
+}
+
+/* Split View */
+.split-container {
+    display: flex;
+    gap: 1rem;
+    height: 100%;
+    min-height: 0;
+}
+
+.pane {
+    flex: 1;
+    background-color: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.pane-header {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background-color: rgba(15, 23, 42, 0.5);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.pane-header h2 {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.pane-content {
+    flex-grow: 1;
+    overflow: auto;
+    position: relative;
+    background-color: #0f172a;
+    /* Dark background for PDF/Code */
+}
+
+/* PDF Embed */
+#pdf-embed {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* Markdown Pane */
+.markdown-preview {
+    padding: 1.5rem;
+}
+
+/* Common Components */
+.actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.btn {
+    padding: 0.75rem 1.5rem;
+    border-radius: 0.5rem;
+    border: none;
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: 500;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn.sm {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.85rem;
+}
+
+.btn.primary {
+    background-color: var(--accent);
+    color: white;
+}
+
+.btn.primary:hover {
+    background-color: var(--accent-hover);
+}
+
+.btn.secondary {
+    background-color: var(--border);
+    color: var(--text-primary);
+}
+
+.btn.secondary:hover {
+    background-color: #475569;
+}
+
+.btn.ghost {
+    background-color: transparent;
+    color: var(--text-secondary);
+}
+
+.btn.ghost:hover {
+    color: var(--text-primary);
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Markdown Content Styling */
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3 {
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+    color: var(--text-primary);
+}
+
+.markdown-preview p {
+    margin-bottom: 0.75rem;
+    color: #cbd5e1;
+    line-height: 1.7;
+}
+
+.markdown-preview pre {
+    background-color: #1e293b;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    overflow-x: auto;
+    margin-bottom: 1rem;
+    border: 1px solid var(--border);
+}
+
+.markdown-preview code {
+    font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+    font-size: 0.9em;
+}
+
+.markdown-preview :not(pre)>code {
+    background-color: rgba(255, 255, 255, 0.1);
+    padding: 0.2rem 0.4rem;
+    border-radius: 0.25rem;
+    color: #e2e8f0;
+}
+
+.markdown-preview table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+}
+
+.markdown-preview th,
+.markdown-preview td {
+    border: 1px solid var(--border);
+    padding: 0.5rem;
+    text-align: left;
+}
+
+.markdown-preview th {
+    background-color: rgba(255, 255, 255, 0.05);
+}

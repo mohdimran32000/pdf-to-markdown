@@ -1,0 +1,19 @@
+# --- Allow List Strategy ---
+# 1. Ignore EVERYTHING first
+*
+
+# 2. Un-ignore specific project files
+!*/
+!.gitignore
+!README.md
+!requirements.txt
+!run_app.bat
+!app/**
+
+# Scripts
+!vertex_ocr_drive.py
+!verify_drive_output.py
+
+# Keep User Guides
+!GIT_GUIDE.md
+!walkthrough.md

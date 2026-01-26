@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini 3 PDF to Markdown</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+
+<body>
+    <div class="app-container">
+        <header>
+            <div class="logo">
+                <!-- Replaced emoji with SVG for reliable rendering -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    style="color: #60a5fa;">
+                    <path
+                        d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
+                </svg>
+                <h1>Gemini 3 OCR</h1>
+            </div>
+            <div class="header-actions">
+                <button id="header-upload-btn" class="btn primary">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                        style="margin-right:8px;">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" x2="12" y1="3" y2="15" />
+                    </svg>
+                    Upload PDF
+                </button>
+            </div>
+        </header>
+
+        <main>
+            <!-- Upload State -->
+            <!-- Upload State (Initial) -->
+            <div class="upload-zone" id="drop-zone">
+                <div class="upload-content">
+                    <svg class="upload-icon" viewBox="0 0 24 24" width="64" height="64">
+                        <path fill="currentColor"
+                            d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" />
+                    </svg>
+                    <h3>Drag & Drop PDF here</h3>
+                    <p style="color: var(--text-secondary); margin-top: 0.5rem;">or use the Upload button above</p>
+                    <input type="file" id="file-input" accept=".pdf" hidden>
+                </div>
+            </div>
+
+            <!-- Global Loader (Overlay) -->
+            <div class="loading-overlay" id="loading-overlay" hidden>
+                <div class="spinner"></div>
+                <p>Processing with Gemini 3...</p>
+            </div>
+
+            <!-- Result State (Split View) -->
+            <div class="split-container" id="result-container" hidden>
+                <!-- Left: PDF Preview -->
+                <div class="pane pdf-pane">
+                    <div class="pane-header">
+                        <h2>Original PDF</h2>
+                    </div>
+                    <div class="pane-content">
+                        <embed id="pdf-embed" src="" type="application/pdf" width="100%" height="100%">
+                    </div>
+                </div>
+
+                <!-- Right: Markdown Result -->
+                <div class="pane markdown-pane">
+                    <div class="pane-header">
+                        <h2>Markdown Output</h2>
+                        <div class="actions">
+                            <button id="copy-btn" class="btn sm secondary">Copy</button>
+                            <button id="download-btn" class="btn sm primary">Download</button>
+                            <button id="reset-btn" class="btn sm ghost">New</button>
+                        </div>
+                    </div>
+                    <div class="pane-content markdown-preview" id="markdown-preview"></div>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script src="script.js"></script>
+</body>
+
+</html>
