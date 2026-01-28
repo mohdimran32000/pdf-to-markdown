@@ -1,6 +1,11 @@
-# --- Allow List Strategy ---
 # 1. Ignore EVERYTHING first
 *
+
+# Explicitly ignore the persistent folders (Just to be safe)
+N8N MCP BUILDER/
+Yashica RAG/
+
+# 2. Un-ignore specific project files
 
 # 2. Un-ignore specific project files
 !*/
