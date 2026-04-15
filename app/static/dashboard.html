@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCR Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --surface-2: #334155;
+            --border: #475569;
+            --text: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --blue: #60a5fa;
+            --green: #4ade80;
+            --red: #f87171;
+            --yellow: #fbbf24;
+            --font: 'Inter', system-ui, sans-serif;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: var(--font);
+            background: var(--bg);
+            color: var(--text);
+            padding: 24px;
+            min-height: 100vh;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 32px;
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .header a {
+            color: var(--blue);
+            text-decoration: none;
+            font-size: 0.875rem;
+        }
+
+        .section {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 24px;
+            border: 1px solid var(--border);
+        }
+
+        .section h2 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        /* Current Job */
+        .job-status {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .status-dot.processing { background: var(--blue); animation: pulse 1.5s infinite; }
+        .status-dot.success { background: var(--green); }
+        .status-dot.failed { background: var(--red); }
+        .status-dot.idle { background: var(--text-secondary); }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .job-meta {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        /* Page coverage bar */
+        .coverage-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+            font-size: 0.8rem;
+        }
+
+        .coverage-track {
+            flex-grow: 1;
+            height: 8px;
+            background: var(--surface-2);
+            border-radius: 99px;
+            overflow: hidden;
+        }
+
+        .coverage-fill {
+            height: 100%;
+            border-radius: 99px;
+            transition: width 0.4s ease;
+        }
+
+        .coverage-fill.full { background: var(--green); }
+        .coverage-fill.partial { background: var(--yellow); }
+        .coverage-fill.low { background: var(--red); }
+
+        .coverage-label {
+            white-space: nowrap;
+            font-weight: 600;
+        }
+
+        .coverage-label.full { color: var(--green); }
+        .coverage-label.partial { color: var(--yellow); }
+        .coverage-label.low { color: var(--red); }
+
+        .missing-pages {
+            font-size: 0.75rem;
+            color: var(--red);
+            margin-bottom: 8px;
+            padding: 6px 10px;
+            background: rgba(248, 113, 113, 0.08);
+            border-radius: 6px;
+            border: 1px solid rgba(248, 113, 113, 0.2);
+        }
+
+        .retried-pages {
+            font-size: 0.75rem;
+            color: var(--yellow);
+            margin-bottom: 8px;
+            padding: 6px 10px;
+            background: rgba(251, 191, 36, 0.08);
+            border-radius: 6px;
+            border: 1px solid rgba(251, 191, 36, 0.2);
+        }
+
+        /* Chunks table */
+        .chunks-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+            margin-top: 12px;
+        }
+
+        .chunks-table th, .chunks-table td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--surface-2);
+        }
+
+        .chunks-table th {
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .chunk-ok { color: var(--green); }
+        .chunk-empty { color: var(--yellow); }
+        .chunk-truncated { color: var(--red); }
+        .chunk-partial { color: var(--yellow); }
+
+        /* History */
+        .history-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--surface-2);
+        }
+
+        .history-item:last-child { border-bottom: none; }
+
+        .history-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .history-file {
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .history-meta {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .history-right {
+            text-align: right;
+        }
+
+        .badge {
+            font-size: 0.7rem;
+            padding: 2px 8px;
+            border-radius: 9999px;
+            font-weight: 600;
+        }
+
+        .badge-success { background: rgba(74, 222, 128, 0.15); color: var(--green); }
+        .badge-failed { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+        .badge-processing { background: rgba(96, 165, 250, 0.15); color: var(--blue); }
+
+        /* Logs */
+        .log-viewer {
+            background: #0d1117;
+            border-radius: 8px;
+            padding: 16px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.75rem;
+            line-height: 1.6;
+            color: var(--text-secondary);
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .log-line-ERROR { color: var(--red); }
+        .log-line-WARNING { color: var(--yellow); }
+        .log-line-INFO { color: var(--text); }
+        .log-line-DEBUG { color: var(--text-secondary); }
+
+        .empty-state {
+            text-align: center;
+            padding: 32px;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        .refresh-info {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>OCR Dashboard</h1>
+        <div>
+            <span id="model-label" class="refresh-info" style="background:rgba(96,165,250,0.15);color:#60a5fa;padding:2px 8px;border-radius:9999px;font-weight:600;margin-right:8px;">...</span>
+            <span class="refresh-info">Auto-refreshes every 2s</span>
+            &nbsp;&nbsp;
+            <a href="/">Back to OCR</a>
+        </div>
+    </div>
+
+    <!-- Current Job -->
+    <div class="section" id="current-section">
+        <h2>Current Job</h2>
+        <div id="current-content">
+            <div class="empty-state">No active job</div>
+        </div>
+    </div>
+
+    <!-- History -->
+    <div class="section">
+        <h2>Recent Jobs</h2>
+        <div id="history-content">
+            <div class="empty-state">No jobs yet</div>
+        </div>
+    </div>
+
+    <!-- Logs -->
+    <div class="section">
+        <h2>Server Logs</h2>
+        <div class="log-viewer" id="log-viewer">Loading...</div>
+    </div>
+
+    <script>
+        const currentContent = document.getElementById('current-content');
+        const historyContent = document.getElementById('history-content');
+        const logViewer = document.getElementById('log-viewer');
+
+        function timeSince(isoStr) {
+            const diff = Date.now() - new Date(isoStr).getTime();
+            const secs = Math.floor(diff / 1000);
+            if (secs < 60) return `${secs}s ago`;
+            const mins = Math.floor(secs / 60);
+            if (mins < 60) return `${mins}m ago`;
+            const hrs = Math.floor(mins / 60);
+            return `${hrs}h ago`;
+        }
+
+        function coverageClass(pct) {
+            if (pct >= 100) return 'full';
+            if (pct >= 80) return 'partial';
+            return 'low';
+        }
+
+        function renderPageCoverage(job) {
+            const received = job.pages_received ? job.pages_received.length : 0;
+            const total = job.total_pages || 0;
+            const missing = job.pages_missing || [];
+            const retried = job.pages_retried || [];
+            const pct = total > 0 ? Math.round(received / total * 100) : 0;
+            const cls = coverageClass(pct);
+
+            let html = `<div class="coverage-bar">
+                <span>Pages:</span>
+                <div class="coverage-track">
+                    <div class="coverage-fill ${cls}" style="width:${pct}%"></div>
+                </div>
+                <span class="coverage-label ${cls}">${received}/${total} (${pct}%)</span>
+            </div>`;
+
+            if (missing.length > 0) {
+                html += `<div class="missing-pages">Missing pages: ${missing.join(', ')}</div>`;
+            }
+            if (retried.length > 0) {
+                html += `<div class="retried-pages">Pages retried individually: ${retried.join(', ')}</div>`;
+            }
+            return html;
+        }
+
+        function renderChunks(chunks) {
+            if (!chunks || chunks.length === 0) return '';
+            // Check if chunks have page coverage data
+            const hasPageData = chunks.some(c => c.pages_found !== undefined);
+            let html = `<table class="chunks-table">
+                <tr><th>#</th><th>Pages</th><th>Duration</th><th>Output</th>${hasPageData ? '<th>Page Coverage</th>' : ''}<th>Status</th></tr>`;
+            for (const c of chunks) {
+                let statusClass, statusText;
+                if (c.truncated) {
+                    statusClass = 'chunk-truncated';
+                    statusText = 'TRUNCATED';
+                } else if (c.status === 'ok') {
+                    if (hasPageData && c.pages_found < c.pages_expected) {
+                        statusClass = 'chunk-partial';
+                        statusText = 'PARTIAL';
+                    } else {
+                        statusClass = 'chunk-ok';
+                        statusText = 'OK';
+                    }
+                } else {
+                    statusClass = 'chunk-empty';
+                    statusText = 'EMPTY';
+                }
+
+                let pageCovCol = '';
+                if (hasPageData) {
+                    const pgCls = c.pages_found === c.pages_expected ? 'chunk-ok' : 'chunk-partial';
+                    pageCovCol = `<td class="${pgCls}">${c.pages_found}/${c.pages_expected}</td>`;
+                }
+
+                html += `<tr>
+                    <td>${c.chunk}</td>
+                    <td>${c.pages}</td>
+                    <td>${c.duration_sec}s</td>
+                    <td>${(c.chars / 1000).toFixed(1)}k chars</td>
+                    ${pageCovCol}
+                    <td class="${statusClass}">${statusText}</td>
+                </tr>`;
+            }
+            html += '</table>';
+            return html;
+        }
+
+        function renderCurrentJob(job) {
+            if (!job) {
+                currentContent.innerHTML = '<div class="empty-state">No active job</div>';
+                return;
+            }
+
+            const dotClass = job.status;
+            const completed = job.chunks.length;
+            const total = job.total_chunks;
+            const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+            currentContent.innerHTML = `
+                <div class="job-status">
+                    <span class="status-dot ${dotClass}"></span>
+                    <strong>${job.filename}</strong>
+                    <span class="badge badge-${dotClass}">${job.status.toUpperCase()}</span>
+                </div>
+                <div class="job-meta">
+                    Request: ${job.request_id} | ${job.total_pages} pages | ${completed}/${total} chunks done (${pct}%) | Started: ${timeSince(job.started_at)}
+                </div>
+                ${renderPageCoverage(job)}
+                ${renderChunks(job.chunks)}
+            `;
+        }
+
+        function renderHistory(history) {
+            if (!history || history.length === 0) {
+                historyContent.innerHTML = '<div class="empty-state">No completed jobs yet</div>';
+                return;
+            }
+
+            let html = '';
+            for (const job of history) {
+                const badgeClass = job.status === 'success' ? 'badge-success' : 'badge-failed';
+                const chunksOk = job.chunks ? job.chunks.filter(c => c.status === 'ok').length : 0;
+                const totalChunks = job.chunks ? job.chunks.length : 0;
+                const totalDuration = job.chunks ? job.chunks.reduce((s, c) => s + c.duration_sec, 0) : 0;
+                const errorInfo = job.error ? ` | Error: ${job.error.substring(0, 80)}` : '';
+
+                // Page coverage info
+                const received = job.pages_received ? job.pages_received.length : '?';
+                const totalPages = job.total_pages || '?';
+                const missing = job.pages_missing || [];
+                const coveragePct = job.coverage_pct !== undefined ? job.coverage_pct : '?';
+                const coverageStr = `${received}/${totalPages} pages (${coveragePct}%)`;
+                const missingStr = missing.length > 0 ? ` | MISSING: [${missing.join(',')}]` : '';
+
+                html += `<div class="history-item">
+                    <div class="history-left">
+                        <span class="status-dot ${job.status}"></span>
+                        <div>
+                            <div class="history-file">${job.filename || 'unknown'}</div>
+                            <div class="history-meta">${job.request_id} | ${coverageStr} | ${chunksOk}/${totalChunks} chunks | ${totalDuration.toFixed(0)}s${missingStr}${errorInfo}</div>
+                        </div>
+                    </div>
+                    <div class="history-right">
+                        <span class="badge ${badgeClass}">${job.status.toUpperCase()}</span>
+                        <div class="history-meta">${job.completed_at ? timeSince(job.completed_at) : ''}</div>
+                    </div>
+                </div>`;
+            }
+            historyContent.innerHTML = html;
+        }
+
+        function getLogLineClass(line) {
+            if (line.includes('[ERROR]')) return 'log-line-ERROR';
+            if (line.includes('[WARNING]')) return 'log-line-WARNING';
+            if (line.includes('[INFO]')) return 'log-line-INFO';
+            return 'log-line-DEBUG';
+        }
+
+        async function refresh() {
+            try {
+                const [statusRes, logsRes] = await Promise.all([
+                    fetch('/status'),
+                    fetch('/logs?lines=200'),
+                ]);
+                const statusData = await statusRes.json();
+                const logsData = await logsRes.json();
+
+                // Update model label
+                const modelLabel = document.getElementById('model-label');
+                if (modelLabel && statusData.model) {
+                    modelLabel.textContent = statusData.model;
+                }
+
+                renderCurrentJob(statusData.current);
+                renderHistory(statusData.history);
+
+                const logLines = logsData.lines || [];
+                logViewer.innerHTML = logLines.map(l => {
+                    const trimmed = l.trimEnd();
+                    const cls = getLogLineClass(trimmed);
+                    return `<span class="${cls}">${trimmed}</span>`;
+                }).join('\n');
+
+                // Auto-scroll to bottom
+                logViewer.scrollTop = logViewer.scrollHeight;
+            } catch (err) {
+                console.error('Dashboard refresh error:', err);
+            }
+        }
+
+        refresh();
+        setInterval(refresh, 2000);
+    </script>
+</body>
+</html>

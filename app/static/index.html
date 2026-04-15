@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gemini 3 PDF to Markdown</title>
+    <title>PDF to Markdown OCR</title>
     <link rel="stylesheet" href="style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -23,9 +23,11 @@
                     <path
                         d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
                 </svg>
-                <h1>Gemini 3 OCR</h1>
+                <h1>PDF to Markdown</h1>
+                <span class="engine-badge">Gemini 3 Flash</span>
             </div>
             <div class="header-actions">
+                <a href="/dashboard.html" class="btn sm ghost" style="margin-right: 8px;">Dashboard</a>
                 <button id="header-upload-btn" class="btn primary">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
                         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
@@ -48,16 +50,23 @@
                         <path fill="currentColor"
                             d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" />
                     </svg>
-                    <h3>Drag & Drop PDF here</h3>
-                    <p style="color: var(--text-secondary); margin-top: 0.5rem;">or use the Upload button above</p>
-                    <input type="file" id="file-input" accept=".pdf" hidden>
+                    <h3>Drag & Drop PDFs here</h3>
+                    <p style="color: var(--text-secondary); margin-top: 0.5rem;">Select one or multiple PDFs — or use the Upload button above</p>
+                    <input type="file" id="file-input" accept=".pdf" multiple hidden>
                 </div>
             </div>
 
-            <!-- Global Loader (Overlay) -->
-            <div class="loading-overlay" id="loading-overlay" hidden>
-                <div class="spinner"></div>
-                <p>Processing with Gemini 3...</p>
+            <!-- Progress Overlay (Single File) -->
+            <div class="loading-overlay" id="progress-overlay" hidden>
+                <div class="progress-card">
+                    <div class="spinner"></div>
+                    <p id="progress-message">Uploading...</p>
+                    <div class="progress-track">
+                        <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+                    </div>
+                    <span class="progress-percent" id="progress-percent">0%</span>
+                    <span class="progress-detail" id="progress-detail"></span>
+                </div>
             </div>
 
             <!-- Result State (Split View) -->
@@ -83,6 +92,25 @@
                         </div>
                     </div>
                     <div class="pane-content markdown-preview" id="markdown-preview"></div>
+                </div>
+            </div>
+            <!-- Batch Mode Container -->
+            <div class="batch-container" id="batch-container" hidden>
+                <div class="batch-header">
+                    <div>
+                        <h2 id="batch-title">Processing PDFs</h2>
+                        <p id="batch-status-label" class="batch-status">Starting...</p>
+                    </div>
+                    <span id="batch-count-label" class="batch-count">0 / 0</span>
+                </div>
+                <div class="batch-progress-track">
+                    <div class="batch-progress-fill" id="batch-progress-fill" style="width:0%"></div>
+                </div>
+                <div class="batch-file-list" id="batch-file-list"></div>
+                <div class="batch-actions">
+                    <button id="batch-download-btn" class="btn primary" hidden>Download Combined Markdown</button>
+                    <button id="retry-failed-btn" class="btn secondary" hidden>Retry Failed (0)</button>
+                    <button id="batch-reset-btn" class="btn ghost">Start Over</button>
                 </div>
             </div>
         </main>

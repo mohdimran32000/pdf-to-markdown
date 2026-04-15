@@ -11,7 +11,7 @@ from google.genai import types
 # --- Configuration ---
 PROJECT_ID = "antigravity-ocr-demo-2026"
 LOCATION = "global" # Verified working for Gemini 3 Preview
-MODEL_ID = "gemini-3-flash-preview" 
+MODEL_ID = "gemini-3.1-pro-preview" 
 
 # Folders from your n8n workflow
 INPUT_FOLDER_ID = "1juGE8k65V7bVKxv7cx-OU3z6sJEg7HEk"      # 01_Input/
@@ -98,18 +98,24 @@ class GeminiProcessor:
     def process_document(self, pdf_bytes, mime_type="application/pdf"):
         """Sends PDF content to Gemini for OCR conversion."""
         prompt = """
-Convert this document to markdown format.
+<system_instruction>
+You are an expert, highly precise Document OCR Engine. Your objective is to extract text and structure from this document.
+</system_instruction>
 
-CRITICAL REQUIREMENTS:
-1. Preserve ALL text exactly as written - no summarization, no omissions
-2. Convert all tables to proper markdown table format
-3. Maintain heading hierarchy using # for main headings, ## for subheadings
-4. Keep all technical specifications, model numbers, serial numbers exactly as shown
-5. Preserve all lists (numbered and bullet points)
-6. For images/diagrams: Describe in format [Image: detailed description]
-7. For flowcharts: Describe in format [Flowchart: step-by-step description]
-8. Maintain bold, italic, underlined text
-9. OUTPUT ONLY the markdown content, no preamble.
+<formatting_rules>
+1. Text Content: Preserve ALL text exactly as written. Use standard markdown for headings (#, ##, ###) and lists. No summaries, no omissions.
+2. Equations: Use strict LaTeX ($...$) for mathematical formulas. You MUST use proper macros (e.g., `\tan`, `\cos^{-1}`) instead of plain text for math.
+3. Images/Diagrams: Output [Image: brief summary of what is shown].
+4. TABLES (CRITICAL): 
+   - You MUST output ALL tables using strictly well-formed HTML tags (<table>, <tr>, <th>, <td>). 
+   - You MUST use `colspan` and `rowspan` to accurately recreate merged cells.
+   - You are STRICTLY FORBIDDEN from generating piped markdown tables (e.g., `| Header | Header |`).
+   - If you detect tabular data, immediately open a <table> tag.
+</formatting_rules>
+
+<output_format>
+Output ONLY the requested content following the rules above. Do not include any conversational preamble.
+</output_format>
 """
         
         # Construct content using types.Part

@@ -1,16 +1,84 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import PlainTextResponse
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi.responses import PlainTextResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-import google.auth
-from google import genai
-from google.genai import types
+import json
+import logging
+import time
+import uuid
+from collections import deque
+from datetime import datetime, timezone
 import io
+import os
+import re
+import asyncio
 import pypdf
+from dotenv import load_dotenv
 
-app = FastAPI(title="Gemini 3 PDF OCR")
+load_dotenv()  # Load .env file from project root
 
-# CORS (Allow local development)
+# ---------------------------------------------------------------------------
+# Logging setup: file + console, with timestamps
+# ---------------------------------------------------------------------------
+os.makedirs("logs", exist_ok=True)
+
+LOG_FILE = "logs/ocr.log"
+LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
+
+file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+
+logger = logging.getLogger("ocr")
+logger.setLevel(logging.DEBUG)
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
+# ---------------------------------------------------------------------------
+# In-memory request tracker (last 50 jobs)
+# ---------------------------------------------------------------------------
+request_history = deque(maxlen=50)
+current_job = None
+
+def new_job(request_id: str, filename: str, total_pages: int, total_chunks: int) -> dict:
+    return {
+        "request_id": request_id,
+        "filename": filename,
+        "total_pages": total_pages,
+        "total_chunks": total_chunks,
+        "status": "processing",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": None,
+        "chunks": [],
+        "error": None,
+        # Page-level tracking
+        "pages_expected": list(range(1, total_pages + 1)),
+        "pages_received": [],
+        "pages_missing": [],
+        "pages_empty": [],
+        "pages_truncated": [],
+        "pages_retried": [],
+    }
+
+def finish_job(job: dict, status: str, error: str = None):
+    job["status"] = status
+    job["completed_at"] = datetime.now(timezone.utc).isoformat()
+    # Compute final missing pages
+    received_set = set(job["pages_received"])
+    expected_set = set(job["pages_expected"])
+    job["pages_missing"] = sorted(expected_set - received_set)
+    job["error"] = error
+    request_history.appendleft(job)
+
+# ---------------------------------------------------------------------------
+# App setup
+# ---------------------------------------------------------------------------
+app = FastAPI(title="PDF OCR to Markdown")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,179 +86,630 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configuration
-PROJECT_ID = "antigravity-ocr-demo-2026"
-LOCATION = "global"
-MODEL_ID = "gemini-3-flash-preview"
+# ---------------------------------------------------------------------------
+# Gemini configuration
+# ---------------------------------------------------------------------------
+MODEL_ID = os.environ.get("GEMINI_MODEL", "gemini-3.1-pro-preview")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+PAGES_PER_CHUNK = 15  # Pages per API request
 
-# Initialize GenAI Client
-try:
-    # Use ADC
-    creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
-    client = genai.Client(
-        vertexai=True,
-        project=PROJECT_ID,
-        location=LOCATION
-    )
-    print(f"GenAI Client initialized for {MODEL_ID}")
-except Exception as e:
-    print(f"Failed to initialize GenAI Client: {e}")
-    client = None
+# ---------------------------------------------------------------------------
+# Initialize Gemini client
+# ---------------------------------------------------------------------------
+from google import genai
+from google.genai import types
 
-def smart_split_pdf(content: bytes) -> list[bytes]:
+GENERATION_CONFIG = types.GenerateContentConfig(
+    max_output_tokens=65536,
+)
+
+if not GEMINI_API_KEY:
+    logger.error("GEMINI_API_KEY environment variable is not set!")
+else:
+    logger.info("Gemini API key loaded (ends ...%s)", GEMINI_API_KEY[-4:])
+
+client = genai.Client(api_key=GEMINI_API_KEY)
+logger.info("Gemini client initialized for model: %s", MODEL_ID)
+
+# ---------------------------------------------------------------------------
+# PDF utilities
+# ---------------------------------------------------------------------------
+
+def get_pdf_page_count(content: bytes) -> int:
+    reader = pypdf.PdfReader(io.BytesIO(content))
+    return len(reader.pages)
+
+def split_pdf_pages(content: bytes, start: int, end: int) -> bytes:
+    """Extract pages [start, end) (0-indexed) from a PDF and return as bytes."""
+    reader = pypdf.PdfReader(io.BytesIO(content))
+    writer = pypdf.PdfWriter()
+    for i in range(start, min(end, len(reader.pages))):
+        writer.add_page(reader.pages[i])
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+def make_page_chunks(total_pages: int, chunk_size: int) -> list[dict]:
+    """Return list of {start_page, end_page} dicts (1-indexed, inclusive)."""
+    chunks = []
+    for start_0 in range(0, total_pages, chunk_size):
+        end_0 = min(start_0 + chunk_size, total_pages)
+        chunks.append({
+            "start_page": start_0 + 1,
+            "end_page": end_0,
+            "start_idx": start_0,
+            "end_idx": end_0,
+        })
+    return chunks
+
+# ---------------------------------------------------------------------------
+# Page validation: check which <!-- Page X --> markers are present
+# ---------------------------------------------------------------------------
+
+def validate_pages(markdown: str, expected_start: int, expected_end: int) -> dict:
     """
-    Splits PDF based on logic:
-    1. If size > 5MB AND pages < 80: Split into ~5MB chunks.
-    2. If pages > 80 AND size < 5MB: Split into 80-page chunks.
-    3. Else: Return as single chunk.
+    Parse markdown for <!-- Page X --> markers and return validation result.
+    Returns {found: [int], missing: [int], expected: [int]}
     """
-    
-    TOTAL_SIZE_MB = len(content) / (1024 * 1024)
-    MAX_CHUNK_SIZE_BYTES = 5 * 1024 * 1024
-    
-    try:
-        reader = pypdf.PdfReader(io.BytesIO(content))
-        total_pages = len(reader.pages)
-        chunks = []
+    expected = list(range(expected_start, expected_end + 1))
+    # Match <!-- Page 5 --> style markers (flexible whitespace)
+    found_markers = re.findall(r'<!--\s*Page\s+(\d+)\s*-->', markdown)
+    found = sorted(set(int(m) for m in found_markers))
+    missing = sorted(set(expected) - set(found))
+    return {"found": found, "missing": missing, "expected": expected}
 
-        # Logic 1: High Density (Size > 5MB, Pages < 80) -> Split by Size
-        if TOTAL_SIZE_MB > 5 and total_pages < 80:
-            print(f"Splitting by SIZE: {TOTAL_SIZE_MB:.2f}MB, {total_pages} pages")
-            
-            # FINAL IMPLEMENTATION FOR SIZE SPLIT
-            chunks = []
-            current_batch_pages = []
-            
-            for page in reader.pages:
-                # Try adding to current batch
-                test_writer = pypdf.PdfWriter()
-                for p in current_batch_pages:
-                    test_writer.add_page(p)
-                test_writer.add_page(page)
-                
-                test_stream = io.BytesIO()
-                test_writer.write(test_stream)
-                
-                if test_stream.tell() > MAX_CHUNK_SIZE_BYTES:
-                    if not current_batch_pages:
-                        # Single page is huge, must accept it
-                        single_writer = pypdf.PdfWriter()
-                        single_writer.add_page(page)
-                        out = io.BytesIO()
-                        single_writer.write(out)
-                        chunks.append(out.getvalue())
+# ---------------------------------------------------------------------------
+# OCR prompt
+# ---------------------------------------------------------------------------
+
+def build_ocr_prompt(start_page: int, end_page: int, total_pages: int) -> str:
+    return f"""<system_instruction>
+You are an expert, highly precise Document OCR Engine. Your objective is to extract text and structure from this document.
+</system_instruction>
+
+<formatting_rules>
+1. Page Tracking: Start EVERY page with: <!-- Page X -->
+   Pages in this chunk: {", ".join(str(p) for p in range(start_page, end_page + 1))}
+2. Text Content: Preserve ALL text exactly as written. Use standard markdown for headings (#, ##) and lists. No summaries, no omissions.
+3. Equations: Use strict LaTeX ($...$) for mathematical formulas. You MUST use proper macros (e.g., `\tan`, `\cos^{-1}`) instead of plain text for math.
+4. Images/Diagrams: Output [Image: brief summary of what is shown].
+5. TABLES (CRITICAL): 
+   - You MUST output ALL tables using strictly well-formed HTML tags (<table>, <tr>, <th>, <td>). 
+   - You MUST use `colspan` and `rowspan` to accurately recreate merged cells.
+   - You are STRICTLY FORBIDDEN from generating piped markdown tables (e.g., `| Header | Header |`).
+   - If you detect tabular data, immediately open a <table> tag.
+</formatting_rules>
+
+<output_format>
+Output ONLY the requested content following the rules above. Do not include any conversational preamble.
+</output_format>"""
+
+# ---------------------------------------------------------------------------
+# Gemini API client with retry
+# ---------------------------------------------------------------------------
+
+async def call_gemini_with_retry(contents, request_id="", chunk_label="",
+                                  max_retries=5, on_event=None):
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info("[%s] Gemini API call START %s (attempt %d/%d)",
+                       request_id, chunk_label, attempt, max_retries)
+            t0 = time.time()
+
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    client.models.generate_content,
+                    model=MODEL_ID,
+                    contents=contents,
+                    config=GENERATION_CONFIG,
+                ),
+                timeout=600.0
+            )
+
+            duration = time.time() - t0
+
+            # Handle safety-filtered / blocked responses
+            if not response.candidates:
+                logger.error("[%s] Gemini returned NO candidates for %s (possible safety filter)",
+                           request_id, chunk_label)
+                raise Exception(f"No candidates returned for {chunk_label} -- content may have been blocked by safety filter")
+
+            candidate = response.candidates[0]
+            finish = candidate.finish_reason.name if candidate.finish_reason else "UNKNOWN"
+
+            # Check for blocked content
+            if finish in ("SAFETY", "BLOCKED", "PROHIBITED_CONTENT"):
+                logger.error("[%s] Gemini BLOCKED %s, finish_reason=%s",
+                           request_id, chunk_label, finish)
+                raise Exception(f"Content blocked by Gemini safety filter ({finish}) for {chunk_label}")
+
+            # RECITATION is transient -- retry the whole chunk before falling back
+            if finish == "RECITATION":
+                logger.warning("[%s] Gemini RECITATION %s (attempt %d/%d), retrying chunk...",
+                             request_id, chunk_label, attempt, max_retries)
+                if on_event:
+                    await on_event(sse_event("stage", stage="retry",
+                        message=f"Content flagged, retrying chunk (attempt {attempt}/{max_retries})..."))
+                if attempt == max_retries:
+                    # All retries exhausted -- return the empty response so per-page fallback kicks in
+                    logger.warning("[%s] RECITATION persisted after %d attempts for %s, falling back to per-page retry",
+                                 request_id, max_retries, chunk_label)
+                    return response
+                await asyncio.sleep(5 * attempt)
+                continue
+
+            text = response.text if response.text else ""
+            out_len = len(text)
+
+            logger.info("[%s] Gemini API DONE %s in %.1fs -> %d chars, finish=%s",
+                       request_id, chunk_label, duration, out_len, finish)
+            return response
+
+        except asyncio.TimeoutError:
+            logger.error("[%s] Gemini TIMEOUT %s (attempt %d/%d)",
+                        request_id, chunk_label, attempt, max_retries)
+            if on_event:
+                await on_event(sse_event("stage", stage="retry",
+                    message=f"Timed out, retrying (attempt {attempt}/{max_retries})..."))
+            if attempt == max_retries:
+                raise Exception(f"Timed out after {max_retries} attempts for {chunk_label}")
+            await asyncio.sleep(10 * attempt)
+
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                match = re.search(r'retry in ([\d.]+)s', error_str, re.IGNORECASE)
+                wait_time = float(match.group(1)) + 2 if match else 15 * attempt
+                logger.warning("[%s] Rate limited %s (attempt %d/%d), waiting %.0fs",
+                             request_id, chunk_label, attempt, max_retries, wait_time)
+                if on_event:
+                    await on_event(sse_event("stage", stage="retry",
+                        message=f"Rate limited, waiting {wait_time:.0f}s (attempt {attempt}/{max_retries})..."))
+                await asyncio.sleep(wait_time)
+            elif "503" in error_str or "UNAVAILABLE" in error_str:
+                wait_time = 10 * attempt
+                logger.warning("[%s] Service unavailable %s (attempt %d/%d), waiting %ds",
+                             request_id, chunk_label, attempt, max_retries, wait_time)
+                if on_event:
+                    await on_event(sse_event("stage", stage="retry",
+                        message=f"Service unavailable, waiting {wait_time}s (attempt {attempt}/{max_retries})..."))
+                await asyncio.sleep(wait_time)
+            else:
+                logger.error("[%s] Non-retryable error %s: %s",
+                           request_id, chunk_label, error_str)
+                raise
+
+    raise Exception(f"Failed after {max_retries} retries for {chunk_label}")
+
+# ---------------------------------------------------------------------------
+# Process a chunk: call Gemini, validate pages, retry missing individually
+# ---------------------------------------------------------------------------
+
+async def process_chunk(content: bytes, chunk_info: dict, total_pages: int,
+                        request_id: str, job: dict, on_event=None) -> str:
+    """
+    Process a PDF chunk through Gemini. Validates page coverage and retries
+    missing pages individually. Returns combined markdown for the chunk.
+    """
+    start_page = chunk_info["start_page"]
+    end_page = chunk_info["end_page"]
+    chunk_label = f"pages {start_page}-{end_page}"
+
+    # --- First attempt: full chunk ---
+    pdf_chunk = split_pdf_pages(content, chunk_info["start_idx"], chunk_info["end_idx"])
+    prompt = build_ocr_prompt(start_page, end_page, total_pages)
+    pdf_part = types.Part(inline_data=types.Blob(data=pdf_chunk, mime_type="application/pdf"))
+    contents_list = [types.Content(role="user", parts=[pdf_part, types.Part.from_text(text=prompt)])]
+
+    response = await call_gemini_with_retry(
+        contents_list, request_id=request_id,
+        chunk_label=chunk_label, on_event=on_event)
+
+    md_text = response.text or ""
+    truncated = False
+    if response.candidates and response.candidates[0].finish_reason:
+        if response.candidates[0].finish_reason.name == "MAX_TOKENS":
+            truncated = True
+
+    # --- Validate page coverage ---
+    validation = validate_pages(md_text, start_page, end_page)
+    found_pages = validation["found"]
+    missing_pages = validation["missing"]
+
+    # Track received pages
+    job["pages_received"].extend(found_pages)
+
+    if truncated:
+        logger.warning("[%s] %s was TRUNCATED (found pages %s, missing %s)",
+                      request_id, chunk_label, found_pages, missing_pages)
+        job["pages_truncated"].extend(missing_pages if missing_pages else [end_page])
+
+    if missing_pages:
+        logger.warning("[%s] MISSING PAGES after %s: %s (found: %s)",
+                      request_id, chunk_label, missing_pages, found_pages)
+
+        # --- Retry missing pages in parallel (max 3 concurrent) ---
+        sem = asyncio.Semaphore(3)
+        recovered_parts: dict[int, str] = {}  # page_num -> markdown
+        pages_done = len(found_pages)
+
+        async def retry_single_page(miss_page: int):
+            nonlocal pages_done
+            async with sem:
+                job["pages_retried"].append(miss_page)
+                retry_label = f"page {miss_page} (retry)"
+                logger.info("[%s] Retrying individual %s", request_id, retry_label)
+
+                if on_event:
+                    await on_event(sse_event("stage", stage="retry",
+                        message=f"Page {miss_page} missing, retrying individually...",
+                        progress=int((pages_done / total_pages) * 100)))
+
+                try:
+                    single_pdf = split_pdf_pages(content, miss_page - 1, miss_page)
+                    single_prompt = build_ocr_prompt(miss_page, miss_page, total_pages)
+                    single_part = types.Part(inline_data=types.Blob(
+                        data=single_pdf, mime_type="application/pdf"))
+                    single_contents = [types.Content(role="user", parts=[
+                        single_part, types.Part.from_text(text=single_prompt)])]
+
+                    single_response = await call_gemini_with_retry(
+                        single_contents, request_id=request_id,
+                        chunk_label=retry_label, on_event=on_event)
+
+                    single_md = single_response.text or ""
+                    if single_md.strip():
+                        single_val = validate_pages(single_md, miss_page, miss_page)
+                        if miss_page in single_val["found"]:
+                            recovered_parts[miss_page] = single_md
+                            job["pages_received"].append(miss_page)
+                            logger.info("[%s] Page %d recovered successfully", request_id, miss_page)
+                        else:
+                            recovered_parts[miss_page] = f"<!-- Page {miss_page} -->\n" + single_md
+                            job["pages_received"].append(miss_page)
+                            logger.warning("[%s] Page %d returned content without marker, injected marker",
+                                         request_id, miss_page)
                     else:
-                        # Commit previous batch
-                        final_writer = pypdf.PdfWriter()
-                        for p in current_batch_pages:
-                            final_writer.add_page(p)
-                        out = io.BytesIO()
-                        final_writer.write(out)
-                        chunks.append(out.getvalue())
-                        
-                        # Start new batch with current page
-                        current_batch_pages = [page]
-                else:
-                    current_batch_pages.append(page)
-            
-            # Leftovers
-            if current_batch_pages:
-                w = pypdf.PdfWriter()
-                for p in current_batch_pages:
-                    w.add_page(p)
-                out = io.BytesIO()
-                w.write(out)
-                chunks.append(out.getvalue())
+                        logger.error("[%s] Page %d retry returned EMPTY", request_id, miss_page)
+                        job["pages_empty"].append(miss_page)
 
-        # Logic 2: Many Pages (Pages > 80, Size < 5MB) -> Split by Page Count
-        elif total_pages > 80 and TOTAL_SIZE_MB < 5:
-            print(f"Splitting by PAGE COUNT: {total_pages} pages")
-            CHUNK_SIZE = 80
-            for i in range(0, total_pages, CHUNK_SIZE):
-                writer = pypdf.PdfWriter()
-                for page in reader.pages[i : i + CHUNK_SIZE]:
-                    writer.add_page(page)
-                out = io.BytesIO()
-                writer.write(out)
-                chunks.append(out.getvalue())
+                except Exception as e:
+                    logger.error("[%s] Page %d retry FAILED: %s", request_id, miss_page, e)
 
-        # Logic 3: No Split
-        else:
-            return [content]
-            
-        return chunks
+                pages_done += 1
+                if on_event:
+                    await on_event(sse_event("stage", stage="retry",
+                        message=f"Recovered {pages_done}/{total_pages} pages...",
+                        progress=int((pages_done / total_pages) * 100)))
 
-    except Exception as e:
-        print(f"Error splitting PDF: {e}")
-        # Fallback to original
-        return [content]
+        await asyncio.gather(*[retry_single_page(p) for p in missing_pages])
+
+        # Append recovered pages in page order
+        for p in sorted(recovered_parts.keys()):
+            md_text += "\n\n" + recovered_parts[p]
+
+    elif not md_text.strip():
+        # Entire chunk was empty
+        logger.error("[%s] %s returned EMPTY response", request_id, chunk_label)
+        job["pages_empty"].extend(range(start_page, end_page + 1))
+
+    return md_text
+
+# ---------------------------------------------------------------------------
+# Final audit: log page coverage summary
+# ---------------------------------------------------------------------------
+
+def audit_job(job: dict, request_id: str):
+    """Log a final summary of page coverage."""
+    total = job["total_pages"]
+    received = sorted(set(job["pages_received"]))
+    missing = sorted(set(job["pages_expected"]) - set(received))
+    retried = sorted(set(job["pages_retried"]))
+    empty = sorted(set(job["pages_empty"]))
+    truncated = sorted(set(job["pages_truncated"]))
+
+    coverage_pct = (len(received) / total * 100) if total > 0 else 0
+
+    logger.info("[%s] === PAGE AUDIT ===", request_id)
+    logger.info("[%s]   Total pages: %d", request_id, total)
+    logger.info("[%s]   Pages received: %d/%d (%.1f%%)", request_id, len(received), total, coverage_pct)
+
+    if missing:
+        logger.error("[%s]   MISSING PAGES: %s", request_id, missing)
+    else:
+        logger.info("[%s]   All pages accounted for", request_id)
+
+    if retried:
+        logger.info("[%s]   Pages retried individually: %s", request_id, retried)
+    if empty:
+        logger.warning("[%s]   Pages with empty response: %s", request_id, empty)
+    if truncated:
+        logger.warning("[%s]   Pages affected by truncation: %s", request_id, truncated)
+
+    logger.info("[%s] === END AUDIT ===", request_id)
+
+    # Update job with final numbers
+    job["pages_received"] = received
+    job["pages_missing"] = missing
+    job["coverage_pct"] = round(coverage_pct, 1)
+
+# ---------------------------------------------------------------------------
+# SSE helper
+# ---------------------------------------------------------------------------
+
+def sse_event(event_type: str, **kwargs) -> str:
+    data = {"type": event_type, **kwargs}
+    return f"data: {json.dumps(data)}\n\n"
+
+# ---------------------------------------------------------------------------
+# POST /convert  (batch mode, plain text response)
+# ---------------------------------------------------------------------------
 
 @app.post("/convert", response_class=PlainTextResponse)
 async def convert_pdf(file: UploadFile = File(...)):
-    """
-    Uploads a PDF, processes it with Gemini 3, and returns Markdown.
-    Splits large PDFs automatically.
-    """
-    if not client:
-        raise HTTPException(status_code=500, detail="LLM Client not initialized")
-    
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
+    request_id = uuid.uuid4().hex[:8]
+    logger.info("[%s] /convert START file=%s", request_id, file.filename)
+
     try:
-        # Read file content
         content = await file.read()
-        
-        # Split PDF if necessary
-        pdf_chunks = smart_split_pdf(content)
-        print(f"Processing {len(pdf_chunks)} chunks...")
-        
+        total_pages = get_pdf_page_count(content)
+        page_chunks = make_page_chunks(total_pages, PAGES_PER_CHUNK)
+        total_chunks = len(page_chunks)
+
+        job = new_job(request_id, file.filename, total_pages, total_chunks)
+        global current_job
+        current_job = job
+
+        logger.info("[%s] Processing %d chunks (%d pages, %d pages/chunk)",
+                   request_id, total_chunks, total_pages, PAGES_PER_CHUNK)
         full_response_text = ""
-        
-        for i, chunk_data in enumerate(pdf_chunks):
-            # Construct Prompt
-            prompt = f"""
-            Convert this document (Part {i+1}/{len(pdf_chunks)}) to markdown format.
-            CRITICAL REQUIREMENTS:
-            1. Preserve ALL text exactly as written.
-            2. Convert tables to markdown tables.
-            3. Maintain heading hierarchy (#, ##).
-            4. Describe images/diagrams in [Image: ...] format.
-            5. No preamble, ONLY output the markdown.
-            """
 
-            # Construct Request
-            pdf_part = types.Part(
-                 inline_data=types.Blob(
-                     data=chunk_data, 
-                     mime_type="application/pdf"
-                 )
-             )
+        for i, chunk_info in enumerate(page_chunks):
+            if i > 0:
+                await asyncio.sleep(1)
 
-            response = client.models.generate_content(
-                model=MODEL_ID,
-                contents=[
-                    types.Content(
-                        role="user",
-                        parts=[
-                            pdf_part,
-                            types.Part.from_text(text=prompt)
-                        ]
-                    )
-                ]
-            )
-            
-            if response.text:
-                full_response_text += response.text + "\n\n"
-        
-        if not full_response_text:
-            raise ValueError("Empty response from Gemini")
+            t0 = time.time()
 
+            md_text = await process_chunk(
+                content, chunk_info, total_pages, request_id, job)
+
+            duration = time.time() - t0
+            out_len = len(md_text)
+            truncated = any(p in job["pages_truncated"]
+                          for p in range(chunk_info["start_page"], chunk_info["end_page"] + 1))
+
+            job["chunks"].append({
+                "chunk": i + 1,
+                "pages": f"{chunk_info['start_page']}-{chunk_info['end_page']}",
+                "duration_sec": round(duration, 1),
+                "chars": out_len,
+                "truncated": truncated,
+                "status": "ok" if md_text.strip() else "empty",
+            })
+
+            if md_text.strip():
+                full_response_text += md_text + "\n\n"
+
+        # Final audit
+        audit_job(job, request_id)
+
+        if not full_response_text.strip():
+            raise ValueError("Empty response from Gemini for all chunks")
+
+        current_job = None
+        finish_job(job, "success")
+        logger.info("[%s] /convert DONE, total output: %d chars", request_id, len(full_response_text))
         return full_response_text.strip()
 
     except Exception as e:
-        print(f"Error processing file: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("[%s] /convert FAILED: %s", request_id, e)
+        if current_job and current_job.get("request_id") == request_id:
+            audit_job(current_job, request_id)
+            finish_job(current_job, "failed", str(e))
+            current_job = None
+        raise HTTPException(status_code=500, detail=str(e) or type(e).__name__)
 
-# Mount Static Files (Frontend)
+# ---------------------------------------------------------------------------
+# POST /convert-stream  (single file, SSE progress)
+# ---------------------------------------------------------------------------
+
+@app.post("/convert-stream")
+async def convert_pdf_stream(file: UploadFile = File(...)):
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
+    content = await file.read()
+    request_id = uuid.uuid4().hex[:8]
+    filename = file.filename
+    logger.info("[%s] /convert-stream START file=%s size=%.2fMB",
+               request_id, filename, len(content) / (1024 * 1024))
+
+    async def event_generator():
+        global current_job
+        job = None
+        try:
+            yield sse_event("stage", stage="reading", message="Reading PDF...", progress=5)
+
+            total_pages = get_pdf_page_count(content)
+            size_mb = len(content) / (1024 * 1024)
+            page_chunks = make_page_chunks(total_pages, PAGES_PER_CHUNK)
+            total_chunks = len(page_chunks)
+
+            job = new_job(request_id, filename, total_pages, total_chunks)
+            current_job = job
+
+            yield sse_event("stage", stage="splitting",
+                          message=f"Analyzed: {size_mb:.1f}MB, {total_pages} pages, {total_chunks} chunk(s)",
+                          progress=10)
+            logger.info("[%s] Split into %d chunks (%d pages)", request_id, total_chunks, total_pages)
+
+            event_queue = asyncio.Queue()
+
+            async def on_retry_event(sse_str):
+                await event_queue.put(sse_str)
+
+            full_response_text = ""
+            for i, chunk_info in enumerate(page_chunks):
+                if i > 0:
+                    await asyncio.sleep(1)
+
+                chunk_progress = 10 + int((i / total_chunks) * 80)
+                pages_label = f"pages {chunk_info['start_page']}-{chunk_info['end_page']}"
+                yield sse_event("stage", stage="processing",
+                              message=f"Processing chunk {i+1}/{total_chunks} ({pages_label})...",
+                              chunk=i+1, totalChunks=total_chunks, progress=chunk_progress)
+
+                t0 = time.time()
+
+                # Run chunk processing as a task so we can send heartbeats
+                ocr_task = asyncio.create_task(
+                    process_chunk(content, chunk_info, total_pages,
+                                 request_id, job, on_event=on_retry_event))
+
+                # Send heartbeats every 30s while the API call is running
+                while not ocr_task.done():
+                    try:
+                        await asyncio.wait_for(asyncio.shield(ocr_task), timeout=30.0)
+                    except asyncio.TimeoutError:
+                        elapsed = int(time.time() - t0)
+                        yield sse_event("stage", stage="processing",
+                                      message=f"Processing chunk {i+1}/{total_chunks} ({pages_label})... {elapsed}s",
+                                      chunk=i+1, totalChunks=total_chunks, progress=chunk_progress)
+                        # Drain any retry events accumulated
+                        while not event_queue.empty():
+                            yield event_queue.get_nowait()
+
+                md_text = ocr_task.result()
+
+                duration = time.time() - t0
+
+                # Drain any remaining retry events
+                while not event_queue.empty():
+                    yield event_queue.get_nowait()
+
+                # Report page validation results
+                validation = validate_pages(md_text,
+                    chunk_info["start_page"], chunk_info["end_page"])
+                pages_found = len(validation["found"])
+                pages_expected = len(validation["expected"])
+                pages_missing = validation["missing"]
+
+                truncated = any(p in job["pages_truncated"]
+                              for p in range(chunk_info["start_page"], chunk_info["end_page"] + 1))
+
+                if truncated:
+                    yield sse_event("stage", stage="warning",
+                                  message=f"Warning: chunk {i+1} ({pages_label}) was truncated",
+                                  progress=chunk_progress)
+
+                if pages_missing and all(p not in job["pages_received"] for p in pages_missing):
+                    yield sse_event("stage", stage="warning",
+                                  message=f"Warning: pages {pages_missing} still missing after retry",
+                                  progress=chunk_progress)
+
+                out_len = len(md_text)
+                job["chunks"].append({
+                    "chunk": i + 1,
+                    "pages": f"{chunk_info['start_page']}-{chunk_info['end_page']}",
+                    "duration_sec": round(duration, 1),
+                    "chars": out_len,
+                    "truncated": truncated,
+                    "pages_found": pages_found,
+                    "pages_expected": pages_expected,
+                    "status": "ok" if md_text.strip() else "empty",
+                })
+
+                if md_text.strip():
+                    full_response_text += md_text + "\n\n"
+
+                done_progress = 10 + int(((i + 1) / total_chunks) * 80)
+                yield sse_event("stage", stage="chunk_done",
+                              message=f"Chunk {i+1}/{total_chunks} done ({pages_label}) - {duration:.0f}s, {pages_found}/{pages_expected} pages, {out_len} chars",
+                              chunk=i+1, totalChunks=total_chunks, progress=done_progress)
+
+            # Final audit
+            audit_job(job, request_id)
+
+            if not full_response_text.strip():
+                logger.error("[%s] Empty response from all chunks", request_id)
+                yield sse_event("error", message="Empty response from Gemini")
+                if job:
+                    finish_job(job, "failed", "Empty response")
+                    current_job = None
+                return
+
+            # Send audit summary before result
+            received = len(set(job["pages_received"]))
+            total_p = job["total_pages"]
+            missing = job.get("pages_missing", [])
+            coverage = job.get("coverage_pct", 0)
+
+            if missing:
+                yield sse_event("stage", stage="warning",
+                              message=f"Audit: {received}/{total_p} pages ({coverage}%). Missing: {missing}",
+                              progress=95)
+            else:
+                yield sse_event("stage", stage="audit",
+                              message=f"Audit: {received}/{total_p} pages ({coverage}%) -- all pages captured",
+                              progress=95)
+
+            finish_job(job, "success")
+            current_job = None
+            logger.info("[%s] /convert-stream DONE, total output: %d chars",
+                       request_id, len(full_response_text))
+            yield sse_event("result", markdown=full_response_text.strip(), progress=100,
+                          audit={"pages_received": received, "total_pages": total_p,
+                                 "pages_missing": missing, "coverage_pct": coverage})
+
+        except Exception as e:
+            logger.error("[%s] /convert-stream FAILED: %s", request_id, e, exc_info=True)
+            if job:
+                audit_job(job, request_id)
+                finish_job(job, "failed", str(e))
+                current_job = None
+            yield sse_event("error", message=str(e) or type(e).__name__)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"}
+    )
+
+# ---------------------------------------------------------------------------
+# GET /status  -- current job + recent history
+# ---------------------------------------------------------------------------
+
+@app.get("/status")
+async def get_status():
+    def clean_job(j):
+        if j is None:
+            return None
+        return {k: v for k, v in j.items() if k != "data"}
+
+    history = [clean_job(j) for j in request_history]
+    return JSONResponse({
+        "current": clean_job(current_job),
+        "history": history[:20],
+        "model": MODEL_ID,
+    })
+
+# ---------------------------------------------------------------------------
+# GET /logs  -- last N lines of the log file
+# ---------------------------------------------------------------------------
+
+@app.get("/logs")
+async def get_logs(lines: int = Query(default=100, ge=1, le=5000)):
+    try:
+        with open(LOG_FILE, "r", encoding="utf-8") as f:
+            all_lines = f.readlines()
+        return JSONResponse({"lines": all_lines[-lines:]})
+    except FileNotFoundError:
+        return JSONResponse({"lines": []})
+
+# ---------------------------------------------------------------------------
+# Mount Static Files (Frontend) -- must be last
+# ---------------------------------------------------------------------------
 app.mount("/", StaticFiles(directory="app/static", html=True), name="static")
