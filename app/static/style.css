@@ -67,6 +67,35 @@ header {
     letter-spacing: 0.03em;
 }
 
+.model-selector {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-right: 12px;
+}
+
+.model-selector label {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.model-selector select {
+    background-color: var(--card-bg);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 0.4rem;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.8rem;
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+    outline: none;
+}
+
+.model-selector select:focus {
+    border-color: var(--accent);
+}
+
 /* Removed p tag styling as we removed the p tag */
 
 main {

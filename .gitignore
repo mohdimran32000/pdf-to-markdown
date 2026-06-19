@@ -24,3 +24,7 @@ Yashica RAG/
 !walkthrough.md
 !STARTUP.md
 !CLAUDE.md
+
+# Re-ignore Python bytecode that !app/** would otherwise sweep in
+app/__pycache__/
+*.pyc

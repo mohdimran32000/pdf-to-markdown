@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Form
 from fastapi.responses import PlainTextResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -90,6 +90,7 @@ app.add_middleware(
 # Gemini configuration
 # ---------------------------------------------------------------------------
 MODEL_ID = os.environ.get("GEMINI_MODEL", "gemini-3.1-pro-preview")
+ALLOWED_MODELS = {"gemini-3.1-pro-preview", "gemini-3-flash-preview"}
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 PAGES_PER_CHUNK = 15  # Pages per API request
 
@@ -188,8 +189,8 @@ Output ONLY the requested content following the rules above. Do not include any 
 # Gemini API client with retry
 # ---------------------------------------------------------------------------
 
-async def call_gemini_with_retry(contents, request_id="", chunk_label="",
-                                  max_retries=5, on_event=None):
+async def call_gemini_with_retry(contents, model_id=None, request_id="",
+                                  chunk_label="", max_retries=5, on_event=None):
     for attempt in range(1, max_retries + 1):
         try:
             logger.info("[%s] Gemini API call START %s (attempt %d/%d)",
@@ -199,7 +200,7 @@ async def call_gemini_with_retry(contents, request_id="", chunk_label="",
             response = await asyncio.wait_for(
                 asyncio.to_thread(
                     client.models.generate_content,
-                    model=MODEL_ID,
+                    model=model_id or MODEL_ID,
                     contents=contents,
                     config=GENERATION_CONFIG,
                 ),
@@ -235,7 +236,7 @@ async def call_gemini_with_retry(contents, request_id="", chunk_label="",
                     logger.warning("[%s] RECITATION persisted after %d attempts for %s, falling back to per-page retry",
                                  request_id, max_retries, chunk_label)
                     return response
-                await asyncio.sleep(5 * attempt)
+                await asyncio.sleep(3 * attempt)
                 continue
 
             text = response.text if response.text else ""
@@ -253,13 +254,13 @@ async def call_gemini_with_retry(contents, request_id="", chunk_label="",
                     message=f"Timed out, retrying (attempt {attempt}/{max_retries})..."))
             if attempt == max_retries:
                 raise Exception(f"Timed out after {max_retries} attempts for {chunk_label}")
-            await asyncio.sleep(10 * attempt)
+            await asyncio.sleep(5 * attempt)
 
         except Exception as e:
             error_str = str(e)
             if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
                 match = re.search(r'retry in ([\d.]+)s', error_str, re.IGNORECASE)
-                wait_time = float(match.group(1)) + 2 if match else 15 * attempt
+                wait_time = float(match.group(1)) + 1 if match else 5 * attempt
                 logger.warning("[%s] Rate limited %s (attempt %d/%d), waiting %.0fs",
                              request_id, chunk_label, attempt, max_retries, wait_time)
                 if on_event:
@@ -267,7 +268,7 @@ async def call_gemini_with_retry(contents, request_id="", chunk_label="",
                         message=f"Rate limited, waiting {wait_time:.0f}s (attempt {attempt}/{max_retries})..."))
                 await asyncio.sleep(wait_time)
             elif "503" in error_str or "UNAVAILABLE" in error_str:
-                wait_time = 10 * attempt
+                wait_time = 5 * attempt
                 logger.warning("[%s] Service unavailable %s (attempt %d/%d), waiting %ds",
                              request_id, chunk_label, attempt, max_retries, wait_time)
                 if on_event:
@@ -286,7 +287,7 @@ async def call_gemini_with_retry(contents, request_id="", chunk_label="",
 # ---------------------------------------------------------------------------
 
 async def process_chunk(content: bytes, chunk_info: dict, total_pages: int,
-                        request_id: str, job: dict, on_event=None) -> str:
+                        request_id: str, job: dict, model_id=None, on_event=None) -> str:
     """
     Process a PDF chunk through Gemini. Validates page coverage and retries
     missing pages individually. Returns combined markdown for the chunk.
@@ -302,7 +303,7 @@ async def process_chunk(content: bytes, chunk_info: dict, total_pages: int,
     contents_list = [types.Content(role="user", parts=[pdf_part, types.Part.from_text(text=prompt)])]
 
     response = await call_gemini_with_retry(
-        contents_list, request_id=request_id,
+        contents_list, model_id=model_id, request_id=request_id,
         chunk_label=chunk_label, on_event=on_event)
 
     md_text = response.text or ""
@@ -354,7 +355,7 @@ async def process_chunk(content: bytes, chunk_info: dict, total_pages: int,
                         single_part, types.Part.from_text(text=single_prompt)])]
 
                     single_response = await call_gemini_with_retry(
-                        single_contents, request_id=request_id,
+                        single_contents, model_id=model_id, request_id=request_id,
                         chunk_label=retry_label, on_event=on_event)
 
                     single_md = single_response.text or ""
@@ -446,12 +447,13 @@ def sse_event(event_type: str, **kwargs) -> str:
 # ---------------------------------------------------------------------------
 
 @app.post("/convert", response_class=PlainTextResponse)
-async def convert_pdf(file: UploadFile = File(...)):
+async def convert_pdf(file: UploadFile = File(...), model: str = Form(None)):
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
+    model_id = model if model in ALLOWED_MODELS else MODEL_ID
     request_id = uuid.uuid4().hex[:8]
-    logger.info("[%s] /convert START file=%s", request_id, file.filename)
+    logger.info("[%s] /convert START file=%s model=%s", request_id, file.filename, model_id)
 
     try:
         content = await file.read()
@@ -469,12 +471,12 @@ async def convert_pdf(file: UploadFile = File(...)):
 
         for i, chunk_info in enumerate(page_chunks):
             if i > 0:
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.2)
 
             t0 = time.time()
 
             md_text = await process_chunk(
-                content, chunk_info, total_pages, request_id, job)
+                content, chunk_info, total_pages, request_id, job, model_id=model_id)
 
             duration = time.time() - t0
             out_len = len(md_text)
@@ -517,15 +519,16 @@ async def convert_pdf(file: UploadFile = File(...)):
 # ---------------------------------------------------------------------------
 
 @app.post("/convert-stream")
-async def convert_pdf_stream(file: UploadFile = File(...)):
+async def convert_pdf_stream(file: UploadFile = File(...), model: str = Form(None)):
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
+    model_id = model if model in ALLOWED_MODELS else MODEL_ID
     content = await file.read()
     request_id = uuid.uuid4().hex[:8]
     filename = file.filename
-    logger.info("[%s] /convert-stream START file=%s size=%.2fMB",
-               request_id, filename, len(content) / (1024 * 1024))
+    logger.info("[%s] /convert-stream START file=%s model=%s size=%.2fMB",
+               request_id, filename, model_id, len(content) / (1024 * 1024))
 
     async def event_generator():
         global current_job
@@ -554,7 +557,7 @@ async def convert_pdf_stream(file: UploadFile = File(...)):
             full_response_text = ""
             for i, chunk_info in enumerate(page_chunks):
                 if i > 0:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(0.2)
 
                 chunk_progress = 10 + int((i / total_chunks) * 80)
                 pages_label = f"pages {chunk_info['start_page']}-{chunk_info['end_page']}"
@@ -567,7 +570,8 @@ async def convert_pdf_stream(file: UploadFile = File(...)):
                 # Run chunk processing as a task so we can send heartbeats
                 ocr_task = asyncio.create_task(
                     process_chunk(content, chunk_info, total_pages,
-                                 request_id, job, on_event=on_retry_event))
+                                 request_id, job, model_id=model_id,
+                                 on_event=on_retry_event))
 
                 # Send heartbeats every 30s while the API call is running
                 while not ocr_task.done():
@@ -694,6 +698,7 @@ async def get_status():
         "current": clean_job(current_job),
         "history": history[:20],
         "model": MODEL_ID,
+        "available_models": sorted(ALLOWED_MODELS),
     })
 
 # ---------------------------------------------------------------------------

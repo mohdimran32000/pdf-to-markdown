@@ -13,6 +13,17 @@ const markdownPreview = document.getElementById('markdown-preview');
 const downloadBtn = document.getElementById('download-btn');
 const copyBtn = document.getElementById('copy-btn');
 const resetBtn = document.getElementById('reset-btn');
+const modelSelect = document.getElementById('model-select');
+const engineBadge = document.getElementById('engine-badge');
+
+// Update badge when model changes
+modelSelect.addEventListener('change', () => {
+    const shortNames = {
+        'gemini-3.1-pro-preview': 'Gemini 3.1 Pro',
+        'gemini-3-flash-preview': 'Gemini 3 Flash'
+    };
+    engineBadge.textContent = shortNames[modelSelect.value] || modelSelect.value;
+});
 
 // Batch elements
 const batchContainer = document.getElementById('batch-container');
@@ -84,6 +95,7 @@ async function handleFile(file) {
 
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('model', modelSelect.value);
 
     const startTime = Date.now();
     let elapsedTimer = null;
@@ -205,12 +217,21 @@ function setProgressStyle(style) {
     }
 }
 
+function preprocessMarkdown(md) {
+    // Strip code fences wrapping HTML tables (Gemini sometimes wraps tables in ```html ... ```)
+    md = md.replace(/```(?:html)?\s*\n(<table[\s\S]*?<\/table>)\s*\n```/gi, '\n\n$1\n\n');
+    // Ensure blank lines before <table> and after </table> for block-level rendering
+    md = md.replace(/([^\n])\n(<table)/gi, '$1\n\n$2');
+    md = md.replace(/(<\/table>)\n([^\n])/gi, '$1\n\n$2');
+    return md;
+}
+
 function renderResult(markdown) {
     progressOverlay.hidden = true;
     dropZone.hidden = false;
     document.querySelector('main').classList.add('has-results');
     resultContainer.hidden = false;
-    markdownPreview.innerHTML = marked.parse(markdown);
+    markdownPreview.innerHTML = marked.parse(preprocessMarkdown(markdown));
 }
 
 function resetView() {
@@ -249,6 +270,7 @@ async function processOneFile(file, item) {
 
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('model', modelSelect.value);
 
     const MAX_RETRIES = 3;
     const RETRY_DELAY_MS = 10000;
