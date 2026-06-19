@@ -89,7 +89,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Gemini configuration
 # ---------------------------------------------------------------------------
-MODEL_ID = os.environ.get("GEMINI_MODEL", "gemini-3.1-pro-preview")
+MODEL_ID = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
 ALLOWED_MODELS = {"gemini-3.1-pro-preview", "gemini-3-flash-preview"}
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 PAGES_PER_CHUNK = 15  # Pages per API request
