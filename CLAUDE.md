@@ -7,10 +7,19 @@ Markdown file as output.
 
 ## Architecture
 - **Backend**: FastAPI + Uvicorn (`app/main.py`)
-- **Frontend**: Vanilla JS + HTML/CSS (`app/static/`)
+- **Frontend**: Vanilla JS + HTML/CSS (`app/static/`), no build step; shared design-token
+  dark theme across the app (`style.css`) and dashboard (inline styles in `dashboard.html`)
 - **OCR engine**: Google Gemini 3 Flash Preview via `google-genai` SDK
 - **PDF handling**: `pypdf` for page-level splitting before API upload
 - **Observability**: `/dashboard.html`, `/status`, `/logs` endpoints, file logging to `logs/ocr.log`
+- **Docs**: `README.md` (public overview + screenshots), UI screenshots in `docs/screenshots/`
+
+### UI note
+The app and dashboard share one visual language (deep-navy surfaces, blue->indigo gradient
+accent, Inter + JetBrains Mono). All element IDs and class names in `index.html` /
+`dashboard.html` are load-bearing for `script.js` - preserve them when restyling. Visibility
+is driven by the HTML `hidden` attribute, so a global `[hidden] { display: none !important; }`
+rule is required (flex containers otherwise override it).
 
 ## How to Run
 
@@ -18,6 +27,9 @@ Markdown file as output.
 export GEMINI_API_KEY="your-key"
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
+
+The key can also be placed in a `.env` file in the project root (loaded via `python-dotenv`);
+`run_app.bat` reads it automatically on Windows. `.env` is git-ignored - never commit it.
 
 Open http://localhost:8000 (main app) or http://localhost:8000/dashboard.html (observability)
 
@@ -52,23 +64,4 @@ produced the best OCR results overall. It ranks #2 on OCR Arena benchmarks and
 outperforms Gemini 2.5 Pro in head-to-head OCR comparisons (53.3% win rate).
 
 ### Why split PDFs into 15-page chunks?
-Gemini silently skips pages in large PDF inputs. Splitting into 15-page chunks
-ensures every page is processed. The markdown output is stitched back together.
-
-### Why not Gemini 3.1 Pro?
-Gemini 3.1 Pro is paid-only ($2/$12 per 1M tokens). No free tier.
-Gemini 3 Flash is the best free-tier model for OCR.
-
-## Known Issues & Fixes
-
-### Unicode crash in Windows console -- FIXED
-- **Root cause**: Unicode in `print()` crashes Windows `charmap` codec
-- **Fix**: Use `logging` module with UTF-8 file handler, ASCII-safe console output
-
-### Server freeze under large batches -- FIXED
-- **Root cause**: Running with `--reload` adds a file watcher that consumes threads
-- **Fix**: Always start without `--reload`
-
-## Other Files (Not Part of Web App)
-- `vertex_ocr_drive.py` -- standalone script for Google Drive batch workflow
-- `verify_drive_output.py` -- read-only Drive verification utility
+Gemini silently skips pages in large PDF inputs. Splitti

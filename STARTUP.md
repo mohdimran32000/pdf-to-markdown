@@ -13,12 +13,14 @@
 
 ### Option 1: Double-click `run_app.bat` (easiest)
 
-The API key is already saved in the `.env` file. Just:
+First, create a `.env` file in the project root with your key (see "Changing the API Key"
+below). Then:
 
 1. Double-click **`run_app.bat`**
 2. Open http://localhost:8000
 
-That's it. The batch file loads the key from `.env` automatically.
+The batch file loads the key from `.env` automatically. `.env` is git-ignored, so it is not
+included when you clone the repo - you create it once locally.
 
 ### Option 2: Command line
 
@@ -60,5 +62,4 @@ Press **Ctrl+C** in the terminal.
 |---------|-----|
 | `GEMINI_API_KEY not set` | Set the env variable (see above) |
 | Port 8000 already in use | Kill the old process or use a different port: `--port 8001` |
-| Server freezes on large batches | Make sure you're NOT using `--reload` flag |
-| Unicode crash in terminal | Already fixed — app uses logging module with UTF-8 file handler |
+| Server freezes on large batches | Make s
