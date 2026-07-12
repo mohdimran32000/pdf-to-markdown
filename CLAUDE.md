@@ -19,7 +19,9 @@ The app and dashboard share one visual language (deep-navy surfaces, blue->indig
 accent, Inter + JetBrains Mono). All element IDs and class names in `index.html` /
 `dashboard.html` are load-bearing for `script.js` - preserve them when restyling. Visibility
 is driven by the HTML `hidden` attribute, so a global `[hidden] { display: none !important; }`
-rule is required (flex containers otherwise override it).
+rule is required (flex containers otherwise override it). `index.html` MUST end with the
+`<script src="script.js"></script>` include before `</body>` - if that tag is missing, no
+handlers attach and the Upload / drop-zone buttons silently do nothing.
 
 ## How to Run
 
@@ -64,4 +66,23 @@ produced the best OCR results overall. It ranks #2 on OCR Arena benchmarks and
 outperforms Gemini 2.5 Pro in head-to-head OCR comparisons (53.3% win rate).
 
 ### Why split PDFs into 15-page chunks?
-Gemini silently skips pages in large PDF inputs. Splitti
+Gemini silently skips pages in large PDF inputs. Splitting into 15-page chunks
+ensures every page is processed. The markdown output is stitched back together.
+
+### Why not Gemini 3.1 Pro?
+Gemini 3.1 Pro is paid-only ($2/$12 per 1M tokens). No free tier.
+Gemini 3 Flash is the best free-tier model for OCR.
+
+## Known Issues & Fixes
+
+### Unicode crash in Windows console -- FIXED
+- **Root cause**: Unicode in `print()` crashes Windows `charmap` codec
+- **Fix**: Use `logging` module with UTF-8 file handler, ASCII-safe console output
+
+### Server freeze under large batches -- FIXED
+- **Root cause**: Running with `--reload` adds a file watcher that consumes threads
+- **Fix**: Always start without `--reload`
+
+## Other Files (Not Part of Web App)
+- `vertex_ocr_drive.py` -- standalone script for Google Drive batch workflow
+- `verify_drive_output.py` -- read-only Drive verification utility

@@ -62,4 +62,5 @@ Press **Ctrl+C** in the terminal.
 |---------|-----|
 | `GEMINI_API_KEY not set` | Set the env variable (see above) |
 | Port 8000 already in use | Kill the old process or use a different port: `--port 8001` |
-| Server freezes on large batches | Make s
+| Server freezes on large batches | Make sure you're NOT using `--reload` flag |
+| Unicode crash in terminal | Already fixed — app uses logging module with UTF-8 file handler |
