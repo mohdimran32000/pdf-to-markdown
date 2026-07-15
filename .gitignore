@@ -29,3 +29,10 @@ Yashica RAG/
 !CLAUDE.md
 
 # Re-ignore Python bytecode that !app/** woul
+# 3. Secrets & noise — explicit belt-and-suspenders (never publish)
+.env
+.env.*
+*.key
+logs/
+**/__pycache__/
+*.pyc
