@@ -54,9 +54,24 @@ Every job streams its progress over SSE and is recorded (request ID, chunk timin
 | Streaming | Server-Sent Events (`/convert-stream`) |
 | Observability | `/dashboard.html`, `/status`, `/logs` + file logging |
 
+## Get your free Gemini API key (2 minutes)
+
+New to this? An API key is just a password that lets the app talk to Google's Gemini model on your behalf. It is free, it lives only on your own computer, and this app never sends it anywhere except Google. Here is the whole thing:
+
+1. Go to **[aistudio.google.com/apikey](https://aistudio.google.com/apikey)** and sign in with any Google account.
+2. Click **Create API key** (blue button). If it asks, let it create a new project - the default is fine.
+3. Your key appears - a long string starting with `AIza...`. Click **Copy**.
+4. In this project's folder, create a file named exactly `.env` and paste the key in like this:
+
+   ```
+   GEMINI_API_KEY=paste-your-key-here
+   ```
+
+That's it. The free tier is enough to convert real documents. Keep the key in `.env` and never share it or commit it - this repo is set up to ignore `.env` so it can never be uploaded by accident. If you ever think your key leaked, delete it on that same AI Studio page and create a new one.
+
 ## Getting started
 
-**1. Requirements:** Python 3.10+ and a Google Gemini API key - get one free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+**1. Requirements:** Python 3.10+ and a Google Gemini API key - [grab a free one in 2 minutes](#get-your-free-gemini-api-key-2-minutes) (see above).
 
 **2. Install:**
 
