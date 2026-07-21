@@ -4,6 +4,8 @@ Turn any PDF - including dense, table-heavy technical documents - into clean, ma
 
 Built as a fast, local web app (FastAPI + vanilla JS) with a real observability dashboard, smart page-level splitting, and automatic retry/recovery so long documents don't silently lose pages.
 
+**[See it in action →](https://mohdimran32000.github.io/pdf-to-markdown/)** - a side-by-side comparison of raw PDF text extraction versus the clean Markdown this produces. No install required.
+
 <p align="center">
   <img src="docs/screenshots/01-home.png" alt="Upload screen - drag and drop PDFs" width="100%">
 </p>
