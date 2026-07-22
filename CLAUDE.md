@@ -5,6 +5,25 @@ Web application that converts PDF files to Markdown using Google Gemini 3 Flash.
 Both single-file and batch (up to 70+ files) processing, producing one stitched combined
 Markdown file as output.
 
+## Repo & Publishing
+- **GitHub repo**: `mohdimran32000/pdf-to-markdown` (renamed 2026-07-22 from
+  `gemini-ocr-web-app` — the old name was dropped as off-brand vs the LinkedIn pitch).
+  GitHub permanently redirects the old `github.com/...` repo URL.
+- **Live demo (GitHub Pages)**: https://mohdimran32000.github.io/pdf-to-markdown/ — the
+  raw-vs-markdown comparison page (`docs/index.html`), linked from the README intro.
+  NOTE: Pages URLs are NOT redirected on rename, so the old `.../gemini-ocr-web-app/`
+  Pages link is permanently dead. Any external link must use the new URL.
+- **License**: MIT (`LICENSE`). Copyright holder is written as "Mohd Imran" — VERIFY this
+  spelling with the user; correct that one line if it's wrong.
+- **Social preview** (`docs/social-preview.png`, 1280x640): a branded hybrid card
+  (gradient title + tagline + mono feature chips, with the split-view screenshot inset).
+  Built from an HTML template rendered pixel-exact via headless Chrome
+  (`chrome --headless=new --window-size=1280,640 --screenshot=...`) using the app's own
+  color tokens + fonts. Must be re-uploaded manually in GitHub Settings -> Social preview
+  (no API/tool sets it). To regenerate, rebuild the HTML card and re-screenshot at 1280x640.
+- **`.gitignore` is deny-all** (`*` on line 2, then `!`-allowlist). Any NEW top-level file
+  (like `LICENSE`) must be explicitly un-ignored with a `!name` entry or `git add` fails.
+
 ## Architecture
 - **Backend**: FastAPI + Uvicorn (`app/main.py`)
 - **Frontend**: Vanilla JS + HTML/CSS (`app/static/`), no build step; shared design-token
