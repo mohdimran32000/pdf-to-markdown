@@ -11,6 +11,7 @@ Yashica RAG/
 !*/
 !.gitignore
 !README.md
+!LICENSE
 !requirements.txt
 !run_app.bat
 !app/**
