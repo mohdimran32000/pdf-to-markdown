@@ -13,8 +13,7 @@ Markdown file as output.
   raw-vs-markdown comparison page (`docs/index.html`), linked from the README intro.
   NOTE: Pages URLs are NOT redirected on rename, so the old `.../gemini-ocr-web-app/`
   Pages link is permanently dead. Any external link must use the new URL.
-- **License**: MIT (`LICENSE`). Copyright holder is written as "Mohd Imran" — VERIFY this
-  spelling with the user; correct that one line if it's wrong.
+- **License**: MIT (`LICENSE`). Copyright holder: Mohamed Imran (the user's name).
 - **Social preview** (`docs/social-preview.png`, 1280x640): a branded hybrid card
   (gradient title + tagline + mono feature chips, with the split-view screenshot inset).
   Built from an HTML template rendered pixel-exact via headless Chrome
